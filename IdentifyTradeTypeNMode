@@ -12,12 +12,15 @@ Public Const TRADE_MODE_ALREADYDEALT As String = "AlreadyDealt"
 
 ' --- Main Subroutine to Test Trade Details Determination ---
 Sub TestTradeDetailsDetermination()
-    ' This subroutine demonstrates how to use the GetTradeDetails function.
-    ' It will analyze the currently active row in the "BookTrades" sheet.
+    ' This subroutine analyzes the currently active row in the "BookTrades" sheet.
+    ' It determines the trade type and mode and writes them to the last columns.
 
     Dim tradeDetails As Object ' Dictionary to hold trade details
     Dim ws As Worksheet
     Dim activeRow As Long
+    Dim lastHeaderCol As Long
+    Dim tradeModeCol As Long
+    Dim tradeTypeCol As Long
 
     On Error GoTo ErrorHandler
 
@@ -30,17 +33,51 @@ Sub TestTradeDetailsDetermination()
         Exit Sub
     End If
 
+    ' Find the last column with a header in row 6
+    lastHeaderCol = ws.Cells(6, ws.Columns.Count).End(xlToLeft).Column
+
+    ' Determine the columns for Trade Mode and Determined Trade Type
+    ' If headers don't exist, add them
+    Dim foundTradeModeHeader As Boolean
+    Dim foundTradeTypeHeader As Boolean
+    
+    foundTradeModeHeader = False
+    foundTradeTypeHeader = False
+
+    ' Check existing headers
+    For i = 1 To lastHeaderCol
+        If LCase(Trim(ws.Cells(6, i).Value)) = LCase("Trade Mode") Then
+            tradeModeCol = i
+            foundTradeModeHeader = True
+        ElseIf LCase(Trim(ws.Cells(6, i).Value)) = LCase("Determined Trade Type") Then
+            tradeTypeCol = i
+            foundTradeTypeHeader = True
+        End If
+    Next i
+
+    ' Add headers if not found
+    If Not foundTradeModeHeader Then
+        lastHeaderCol = lastHeaderCol + 1
+        ws.Cells(6, lastHeaderCol).Value = "Trade Mode"
+        tradeModeCol = lastHeaderCol
+    End If
+    
+    If Not foundTradeTypeHeader Then
+        lastHeaderCol = lastHeaderCol + 1
+        ws.Cells(6, lastHeaderCol).Value = "Determined Trade Type"
+        tradeTypeCol = lastHeaderCol
+    End If
+
+
     Set tradeDetails = GetTradeDetails(ws, activeRow)
 
     If Not tradeDetails Is Nothing Then
-        ' Display the determined trade details
-        Dim key As Variant
-        Dim msg As String
-        msg = "Trade Details for Row " & activeRow & ":" & vbNewLine
-        For Each key In tradeDetails.Keys
-            msg = msg & key & ": " & tradeDetails.Item(key) & vbNewLine
-        Next key
-        MsgBox msg, vbInformation, "Trade Details"
+        ' Write the determined trade mode and type to the sheet
+        ws.Cells(activeRow, tradeModeCol).Value = tradeDetails("tradeMode")
+        ws.Cells(activeRow, tradeTypeCol).Value = tradeDetails("determinedTradeType")
+        
+        MsgBox "Trade Mode ('" & tradeDetails("tradeMode") & "') and Determined Trade Type ('" & tradeDetails("determinedTradeType") & "') " & _
+               "have been written to row " & activeRow & ".", vbInformation, "Update Complete"
     Else
         MsgBox "Failed to determine trade details for row " & activeRow & ". See previous error messages.", vbCritical
     End If
@@ -349,8 +386,7 @@ Function GetTradeDetails(ByVal ws As Worksheet, ByVal dataRow As Long) As Object
     If Len(spreadBpVal) > 0 Then
         populatedCount = populatedCount + 1
         populatedField = "spread-bp"
-    End If
-    If Len(rtcVal) > 0 Then
+    E If Len(rtcVal) > 0 Then
         populatedCount = populatedCount + 1
         populatedField = "rtc"
     End If
