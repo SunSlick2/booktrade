@@ -21,6 +21,7 @@ Sub TestTradeDetailsDetermination()
     Dim lastHeaderCol As Long
     Dim tradeModeCol As Long
     Dim tradeTypeCol As Long
+    Dim i As Long ' Declared i here
 
     On Error GoTo ErrorHandler
 
@@ -134,7 +135,7 @@ Function GetTradeDetails(ByVal ws As Worksheet, ByVal dataRow As Long) As Object
     ' Initialize all expected fields to empty string to prevent "Key not found" errors
     ' if a column doesn't exist in the sheet.
     tradeDetailsDict.Add "account", ""
-    tradeDetailsDict.Add "stp Y/N", ""
+    tradeDetailsDict.Add "stp_YN", ""
     tradeDetailsDict.Add "tradeId", ""
     tradeDetailsDict.Add "currencyPair", ""
     tradeDetailsDict.Add "direction", ""
@@ -146,7 +147,7 @@ Function GetTradeDetails(ByVal ws As Worksheet, ByVal dataRow As Long) As Object
     tradeDetailsDict.Add "tenor", ""
     tradeDetailsDict.Add "valueDate", ""
     tradeDetailsDict.Add "traderAllInRate", ""
-    tradeDetailsDict.Add "tradeEntryTime", ""
+    tradeDetailsDict.Add "traderEntryTime", ""
     tradeDetailsDict.Add "traderSpotRate", ""
     tradeDetailsDict.Add "traderForwardPoints", ""
     tradeDetailsDict.Add "traderSwapPoints", ""
@@ -161,7 +162,7 @@ Function GetTradeDetails(ByVal ws As Worksheet, ByVal dataRow As Long) As Object
 
     ' Populate dictionary from worksheet cells
     If colHeaders.Exists(LCase("account")) Then tradeDetailsDict("account") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("account"))).Value))
-    If colHeaders.Exists(LCase("stp Y/N")) Then tradeDetailsDict("stp Y/N") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("stp Y/N"))).Value))
+    If colHeaders.Exists(LCase("stp_YN")) Then tradeDetailsDict("stp_YN") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("stp_YN"))).Value))
     If colHeaders.Exists(LCase("tradeId")) Then tradeDetailsDict("tradeId") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("tradeId"))).Value))
     If colHeaders.Exists(LCase("currencyPair")) Then tradeDetailsDict("currencyPair") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("currencyPair"))).Value))
     If colHeaders.Exists(LCase("direction")) Then tradeDetailsDict("direction") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("direction"))).Value))
@@ -201,7 +202,7 @@ Function GetTradeDetails(ByVal ws As Worksheet, ByVal dataRow As Long) As Object
         isLiveCandidate = False
     End If
 
-    ' Check AlreadyDealt mandatory fields (common + stp Y/N)
+    ' Check AlreadyDealt mandatory fields (common + stp_YN)
     If Len(tradeDetailsDict("account")) = 0 Or _
        Len(tradeDetailsDict("tradeId")) = 0 Or _
        Len(tradeDetailsDict("currencyPair")) = 0 Or _
@@ -216,7 +217,7 @@ Function GetTradeDetails(ByVal ws As Worksheet, ByVal dataRow As Long) As Object
        Len(tradeDetailsDict("traderAllInRate")) = 0 Or _
        Len(tradeDetailsDict("tradeEntryTime")) = 0 Or _
        Len(tradeDetailsDict("traderSpotRate")) = 0 Or _
-       Len(tradeDetailsDict("stp Y/N")) = 0 Then
+       Len(tradeDetailsDict("stp_YN")) = 0 Then
         isAlreadyDealtCandidate = False
     End If
 
@@ -271,21 +272,21 @@ Function GetTradeDetails(ByVal ws As Worksheet, ByVal dataRow As Long) As Object
             ' Determine Near and Far Leg based on valueDate
             Dim row1ValueDate As Date, row2ValueDate As Date
             Dim row1RowIndex As Long, row2RowIndex As Long
+            Dim tempDate1 As Variant, tempDate2 As Variant
 
             row1RowIndex = swapLegs.Item(1)
             row2RowIndex = swapLegs.Item(2)
 
-            On Error Resume Next ' Handle potential error if valueDate is not a valid date
-            row1ValueDate = CDate(ws.Cells(row1RowIndex, colHeaders(LCase("valueDate"))).Value)
-            row2ValueDate = CDate(ws.Cells(row2RowIndex, colHeaders(LCase("valueDate"))).Value)
-            On Error GoTo ErrorHandler ' Re-enable error handling
+            tempDate1 = TryParseDate(Trim(CStr(ws.Cells(row1RowIndex, colHeaders(LCase("valueDate"))).Value)))
+            tempDate2 = TryParseDate(Trim(CStr(ws.Cells(row2RowIndex, colHeaders(LCase("valueDate"))).Value)))
 
-            If Err.Number <> 0 Then
+            If IsNull(tempDate1) Or IsNull(tempDate2) Then
                 MsgBox "Error: Invalid 'valueDate' found for swap tradeId " & tradeIdValue & ". Please ensure valueDate is a valid date format.", vbCritical
                 Set GetTradeDetails = Nothing
                 Exit Function
             End If
-            Err.Clear
+            row1ValueDate = CDate(tempDate1)
+            row2ValueDate = CDate(tempDate2)
 
             If row1ValueDate < row2ValueDate Then
                 tradeDetailsDict.Add "nearLegRow", row1RowIndex
@@ -302,16 +303,16 @@ Function GetTradeDetails(ByVal ws As Worksheet, ByVal dataRow As Long) As Object
 
         Case "outright" ' Tod, Tom, Forward
             Dim tradeValueDate As Date
-            On Error Resume Next ' Handle potential error if valueDate is not a valid date
-            tradeValueDate = CDate(tradeDetailsDict("valueDate"))
-            On Error GoTo ErrorHandler ' Re-enable error handling
+            Dim tempTradeValueDate As Variant
+            tempTradeValueDate = TryParseDate(tradeDetailsDict("valueDate"))
 
-            If Err.Number <> 0 Then
-                MsgBox "Error: 'valueDate' is not a valid date for Outright trade in row " & dataRow & ".", vbCritical
+            If IsNull(tempTradeValueDate) Then
+                MsgBox "Error: 'valueDate' is not a valid date for Outright trade in row " & dataRow & ". Value: " & tradeDetailsDict("valueDate"), vbCritical
                 Set GetTradeDetails = Nothing
                 Exit Function
+            Else
+                tradeValueDate = CDate(tempTradeValueDate)
             End If
-            Err.Clear ' Clear any error from CDate conversion
 
             Dim todDate As Date: todDate = Date ' Today's date
             Dim tomDate As Date: tomDate = GetTomDateFromSetup(tradeDetailsDict("currencyPair")) ' Placeholder
@@ -386,7 +387,8 @@ Function GetTradeDetails(ByVal ws As Worksheet, ByVal dataRow As Long) As Object
     If Len(spreadBpVal) > 0 Then
         populatedCount = populatedCount + 1
         populatedField = "spread-bp"
-    E If Len(rtcVal) > 0 Then
+    End If
+    If Len(rtcVal) > 0 Then
         populatedCount = populatedCount + 1
         populatedField = "rtc"
     End If
@@ -424,6 +426,16 @@ Function GetTradeDetails(ByVal ws As Worksheet, ByVal dataRow As Long) As Object
 ErrorHandler:
     MsgBox "An unexpected error occurred in GetTradeDetails for row " & dataRow & ": " & Err.Description, vbCritical
     Set GetTradeDetails = Nothing
+End Function
+
+' --- Helper function to safely parse a date string ---
+Private Function TryParseDate(ByVal dateString As String) As Variant
+    ' Attempts to convert a string to a Date. Returns Null if conversion fails.
+    If IsDate(dateString) Then
+        TryParseDate = CDate(dateString)
+    Else
+        TryParseDate = Null
+    End If
 End Function
 
 ' --- Placeholder Functions for Setup Sheet Lookups ---
