@@ -1,0 +1,839 @@
+Option Explicit
+
+' --- Constants for Trade Types and Modes ---
+Public Const TRADE_TYPE_SPOT As String = "Spot"
+Public Const TRADE_TYPE_TOD As String = "Tod"
+Public Const TRADE_TYPE_TOM As String = "Tom"
+Public Const TRADE_TYPE_FORWARD As String = "Forward"
+Public Const TRADE_TYPE_SWAP As String = "Swap"
+
+Public Const TRADE_MODE_LIVE As String = "Live"
+Public Const TRADE_MODE_ALREADYDEALT As String = "AlreadyDealt"
+
+' --- Main Subroutine to Test Trade Details Determination (for single row) ---
+Sub DetermineTradeDetails()
+    ' This subroutine analyzes the currently active row in the "BookTrades" sheet.
+    ' It determines the trade type and mode and writes them to the last columns.
+
+    Dim tradeDetails As Object ' Dictionary to hold trade details
+    Dim ws As Worksheet
+    Dim activeRow As Long
+    Dim tradeModeCol As Long
+    Dim tradeTypeCol As Long
+    Dim valueDateCol As Long
+
+    On Error GoTo ErrorHandler
+
+    Set ws = ThisWorkbook.Worksheets("BookTrades")
+    activeRow = ActiveCell.Row
+
+    ' Ensure the active row is a data row (below headers)
+    If activeRow <= 6 Then
+        MsgBox "Please select a data row (row 7 or below) in the 'BookTrades' sheet.", vbExclamation
+        Exit Sub
+    End If
+
+    ' Get the columns for Trade Mode, Determined Trade Type, and ValueDate
+    ' GetHeaderColumns ensures these headers exist or adds them.
+    GetHeaderColumns ws, tradeModeCol, tradeTypeCol
+    valueDateCol = GetColumnIndexByName(ws, "valueDate")
+
+    Set tradeDetails = GetTradeDetails(ws, activeRow)
+
+    If Not tradeDetails Is Nothing And Not tradeDetails.Exists("Error") Then
+        ' Write the determined trade mode and type to the sheet
+        ws.Cells(activeRow, tradeModeCol).Value = tradeDetails("tradeMode")
+        ws.Cells(activeRow, tradeTypeCol).Value = tradeDetails("determinedTradeType")
+        
+        ' Write the determined or populated valueDate back to the sheet
+        If valueDateCol <> 0 Then
+            ws.Cells(activeRow, valueDateCol).Value = tradeDetails("valueDate")
+            ' Explicitly set the number format for valueDate cell
+            ws.Cells(activeRow, valueDateCol).NumberFormat = "dd-mmm-yy"
+        End If
+
+        ' Apply red font if tradeType or valueDate were populated by the macro
+        If tradeDetails.Exists("isTradeTypePopulated") Then
+            If tradeDetails("isTradeTypePopulated") = True Then
+                ws.Cells(activeRow, tradeTypeCol).Font.Color = RGB(255, 0, 0)
+            Else
+                ws.Cells(activeRow, tradeTypeCol).Font.Color = RGB(0, 0, 0) ' Reset to black if not populated by macro
+            End If
+        Else
+            ws.Cells(activeRow, tradeTypeCol).Font.Color = RGB(0, 0, 0) ' Default to black if flag not present
+        End If
+
+        If tradeDetails.Exists("isValueDatePopulated") Then
+            If tradeDetails("isValueDatePopulated") = True Then
+                ws.Cells(activeRow, valueDateCol).Font.Color = RGB(255, 0, 0)
+            Else
+                ws.Cells(activeRow, valueDateCol).Font.Color = RGB(0, 0, 0) ' Reset to black if not populated by macro
+            End If
+        Else
+            ws.Cells(activeRow, valueDateCol).Font.Color = RGB(0, 0, 0) ' Default to black if flag not present
+        End If
+
+        MsgBox "Trade Mode ('" & tradeDetails("tradeMode") & "') and Determined Trade Type ('" & tradeDetails("determinedTradeType") & "') " & _
+               "have been written to row " & activeRow & ".", vbInformation, "Update Complete"
+    Else
+        Dim errorMessage As String
+        If Not tradeDetails Is Nothing Then
+            errorMessage = tradeDetails("Error")
+        Else
+            errorMessage = "An unknown error occurred."
+        End If
+        MsgBox "Failed to determine trade details for row " & activeRow & ". Error: " & errorMessage, vbCritical
+    End If
+
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "An error occurred in DetermineTradeDetails: " & Err.Description, vbCritical
+End Sub
+
+' --- NEW Subroutine to process ALL populated rows ---
+Sub DetermineTradeDetailsAll()
+    ' This subroutine iterates through all populated rows in the "BookTrades" sheet
+    ' and determines the trade type and mode, handling errors gracefully for each row.
+
+    Dim ws As Worksheet
+    Dim lastRowCurrencyPair As Long
+    Dim lastRowAccount As Long
+    Dim lastRow As Long
+    Dim currentRow As Long
+    Dim tradeDetails As Object
+    Dim tradeModeCol As Long
+    Dim tradeTypeCol As Long
+    Dim valueDateCol As Long
+    Dim errorMessage As String
+    
+    ' Set a reference to the active worksheet.
+    On Error GoTo ErrorHandler
+    Set ws = ThisWorkbook.Worksheets("BookTrades")
+
+    ' Get the columns for Trade Mode and Determined Trade Type, adding them if they don't exist.
+    ' GetHeaderColumns ensures these headers exist or adds them.
+    GetHeaderColumns ws, tradeModeCol, tradeTypeCol
+    valueDateCol = GetColumnIndexByName(ws, "valueDate")
+
+    ' Determine the last populated row by checking two key columns.
+    lastRowCurrencyPair = ws.Cells(ws.Rows.Count, GetColumnIndexByName(ws, "currencyPair")).End(xlUp).Row
+    lastRowAccount = ws.Cells(ws.Rows.Count, GetColumnIndexByName(ws, "account")).End(xlUp).Row
+    
+    lastRow = WorksheetFunction.Max(lastRowCurrencyPair, lastRowAccount)
+
+    If lastRow < 7 Then
+        MsgBox "No data rows found to process (starting from row 7).", vbInformation
+        Exit Sub
+    End If
+
+    ' Loop through all populated rows, starting from row 7 (after headers)
+    Application.ScreenUpdating = False ' Turn off screen updating for performance
+    
+    For currentRow = 7 To lastRow
+        On Error Resume Next ' Enable inline error handling for GetTradeDetails
+        Set tradeDetails = GetTradeDetails(ws, currentRow)
+        On Error GoTo 0 ' Disable inline error handling
+
+        If Not tradeDetails Is Nothing And Not tradeDetails.Exists("Error") Then
+            ' No error, write the determined trade details
+            ws.Cells(currentRow, tradeModeCol).Value = tradeDetails("tradeMode")
+            ws.Cells(currentRow, tradeTypeCol).Value = tradeDetails("determinedTradeType")
+            
+            ' Write the determined or populated valueDate back to the sheet
+            If valueDateCol <> 0 Then
+                ws.Cells(currentRow, valueDateCol).Value = tradeDetails("valueDate")
+                ' Explicitly set the number format for valueDate cell
+                ws.Cells(currentRow, valueDateCol).NumberFormat = "dd-mmm-yy"
+            End If
+
+            ' Apply red font if tradeType or valueDate were populated by the macro
+            If tradeDetails.Exists("isTradeTypePopulated") Then
+                If tradeDetails("isTradeTypePopulated") = True Then
+                    ws.Cells(currentRow, tradeTypeCol).Font.Color = RGB(255, 0, 0)
+                Else
+                    ws.Cells(currentRow, tradeTypeCol).Font.Color = RGB(0, 0, 0)
+                End If
+            Else
+                ws.Cells(currentRow, tradeTypeCol).Font.Color = RGB(0, 0, 0)
+            End If
+
+            If tradeDetails.Exists("isValueDatePopulated") Then
+                If tradeDetails("isValueDatePopulated") = True Then
+                    ws.Cells(currentRow, valueDateCol).Font.Color = RGB(255, 0, 0)
+                Else
+                    ws.Cells(currentRow, valueDateCol).Font.Color = RGB(0, 0, 0)
+                End If
+            Else
+                ws.Cells(currentRow, valueDateCol).Font.Color = RGB(0, 0, 0)
+            End If
+
+        Else
+            ' An error occurred, write "Err" and the error message
+            ws.Cells(currentRow, tradeModeCol).Value = "Err"
+            If Not tradeDetails Is Nothing Then
+                errorMessage = tradeDetails("Error")
+            Else
+                errorMessage = "Unknown error during trade details determination."
+            End If
+            ws.Cells(currentRow, tradeTypeCol).Value = errorMessage
+            
+            ' Ensure font color is reset to black on error for these cells if they were not populated by error
+            If tradeTypeCol <> 0 Then ws.Cells(currentRow, tradeTypeCol).Font.Color = RGB(0, 0, 0)
+            If valueDateCol <> 0 Then ws.Cells(currentRow, valueDateCol).Font.Color = RGB(0, 0, 0)
+        End If
+    Next currentRow
+
+    Application.ScreenUpdating = True ' Turn screen updating back on
+    MsgBox "Trade details determination for all populated rows is complete.", vbInformation, "Process Complete"
+    
+    Exit Sub
+
+ErrorHandler:
+    Application.ScreenUpdating = True ' Ensure screen is re-enabled on error
+    MsgBox "An unexpected error occurred in DetermineTradeDetailsAll: " & Err.Description, vbCritical
+End Sub
+
+' --- Function to Get Trade Details for a Given Row ---
+Function GetTradeDetails(ByVal ws As Worksheet, ByVal dataRow As Long) As Object
+    '--- Version 1.23 ---
+    ' Analyzes a given row in the "BookTrades" worksheet to determine:
+    ' 1. Execution Mode (Live vs. AlreadyDealt) based on traderAllInRate.
+    ' 2. Trade Type (Tod, Tom, Spot, Forward, Swap)
+    ' 3. Extracts all relevant field values.
+    ' 4. Validates mandatory fields and consistency of valueDate/tenor.
+    ' Returns a Dictionary object containing all determined details. If an error
+    ' occurs, the dictionary will contain a single key "Error" with the message.
+    ' Includes flags: "isTradeTypePopulated" and "isValueDatePopulated" to indicate if
+    ' these fields were set by the macro.
+
+    Dim tradeDetailsDict As Object
+    Set tradeDetailsDict = CreateObject("Scripting.Dictionary")
+    
+    On Error GoTo ErrorHandler
+
+    Dim colHeaders As Object
+    Set colHeaders = CreateObject("Scripting.Dictionary")
+
+    Dim i As Long
+    Dim headerText As String
+    Dim tradeMode As String
+    Dim determinedTradeType As String
+    Dim tradeIdValue As String
+    
+    ' Flags to indicate if tradeType or valueDate were populated by the macro
+    tradeDetailsDict.Add "isTradeTypePopulated", False
+    tradeDetailsDict.Add "isValueDatePopulated", False
+
+    Dim tradeIdCol As Long
+    tradeIdCol = GetColumnIndexByName(ws, "tradeId")
+    If tradeIdCol = 0 Then
+        tradeDetailsDict.Add "Error", "Mandatory header 'tradeId' is missing."
+        Set GetTradeDetails = tradeDetailsDict
+        Exit Function
+    End If
+
+    Dim tradeTypeCol As Long
+    tradeTypeCol = GetColumnIndexByName(ws, "tradeType")
+    If tradeTypeCol = 0 Then
+        tradeDetailsDict.Add "Error", "Mandatory header 'tradeType' is missing."
+        Set GetTradeDetails = tradeDetailsDict
+        Exit Function
+    End If
+    
+    Dim valueDateCol As Long ' Get the valueDate column index early for TryParseDate and potential population
+    valueDateCol = GetColumnIndexByName(ws, "valueDate")
+    If valueDateCol = 0 Then
+        tradeDetailsDict.Add "Error", "Mandatory header 'valueDate' is missing."
+        Set GetTradeDetails = tradeDetailsDict
+        Exit Function
+    End If
+
+    For i = 1 To ws.Cells(6, ws.Columns.Count).End(xlToLeft).Column
+        headerText = Trim(ws.Cells(6, i).Value)
+        If headerText <> "" Then
+            If Not colHeaders.Exists(LCase(headerText)) Then
+                colHeaders.Add LCase(headerText), i
+            End If
+        End If
+    Next i
+
+    tradeDetailsDict.Add "row", dataRow
+
+    ' Initialize all expected fields to empty string
+    tradeDetailsDict.Add "account", ""
+    tradeDetailsDict.Add "stp_YN", ""
+    tradeDetailsDict.Add "tradeId", ""
+    tradeDetailsDict.Add "currencyPair", ""
+    tradeDetailsDict.Add "direction", ""
+    tradeDetailsDict.Add "ccy1", ""
+    tradeDetailsDict.Add "ccy1Amount", ""
+    tradeDetailsDict.Add "ccy2Amount", ""
+    tradeDetailsDict.Add "tradeEntryDate", ""
+    tradeDetailsDict.Add "tradeType", ""
+    tradeDetailsDict.Add "tenor", ""
+    tradeDetailsDict.Add "valueDate", ""
+    tradeDetailsDict.Add "traderAllInRate", ""
+    tradeDetailsDict.Add "tradeEntryTime", ""
+    tradeDetailsDict.Add "traderSpotRate", ""
+    tradeDetailsDict.Add "traderForwardPoints", ""
+    tradeDetailsDict.Add "traderSwapPoints", ""
+    tradeDetailsDict.Add "spread-pip", ""
+    tradeDetailsDict.Add "spread-bp", ""
+    tradeDetailsDict.Add "rtc", ""
+    tradeDetailsDict.Add "status", ""
+    tradeDetailsDict.Add "requestingFullName", ""
+    tradeDetailsDict.Add "filename", ""
+
+    ' Populate dictionary from worksheet cells
+    If colHeaders.Exists(LCase("account")) Then tradeDetailsDict("account") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("account"))).Value))
+    If colHeaders.Exists(LCase("stp_YN")) Then tradeDetailsDict("stp_YN") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("stp_YN"))).Value))
+    If colHeaders.Exists(LCase("tradeId")) Then tradeDetailsDict("tradeId") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("tradeId"))).Value))
+    If colHeaders.Exists(LCase("currencyPair")) Then tradeDetailsDict("currencyPair") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("currencyPair"))).Value))
+    If colHeaders.Exists(LCase("direction")) Then tradeDetailsDict("direction") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("direction"))).Value))
+    If colHeaders.Exists(LCase("ccy1")) Then tradeDetailsDict("ccy1") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("ccy1"))).Value))
+    If colHeaders.Exists(LCase("ccy1Amount")) Then tradeDetailsDict("ccy1Amount") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("ccy1Amount"))).Value))
+    If colHeaders.Exists(LCase("ccy2Amount")) Then tradeDetailsDict("ccy2Amount") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("ccy2Amount"))).Value))
+    If colHeaders.Exists(LCase("tradeEntryDate")) Then tradeDetailsDict("tradeEntryDate") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("tradeEntryDate"))).Value))
+    If colHeaders.Exists(LCase("tradeType")) Then tradeDetailsDict("tradeType") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("tradeType"))).Value))
+    If colHeaders.Exists(LCase("tenor")) Then tradeDetailsDict("tenor") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("tenor"))).Value))
+    ' Corrected: Read valueDate directly, allowing Excel to store as Date if valid
+    If colHeaders.Exists(LCase("valueDate")) Then tradeDetailsDict("valueDate") = ws.Cells(dataRow, colHeaders(LCase("valueDate"))).Value
+    If colHeaders.Exists(LCase("traderAllInRate")) Then tradeDetailsDict("traderAllInRate") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("traderAllInRate"))).Value))
+    If colHeaders.Exists(LCase("tradeEntryTime")) Then tradeDetailsDict("tradeEntryTime") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("tradeEntryTime"))).Value))
+    If colHeaders.Exists(LCase("traderSpotRate")) Then tradeDetailsDict("traderSpotRate") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("traderSpotRate"))).Value))
+    If colHeaders.Exists(LCase("traderForwardPoints")) Then tradeDetailsDict("traderForwardPoints") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("traderForwardPoints"))).Value))
+    If colHeaders.Exists(LCase("traderSwapPoints")) Then tradeDetailsDict("traderSwapPoints") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("traderSwapPoints"))).Value))
+    If colHeaders.Exists(LCase("spread-pip")) Then tradeDetailsDict("spread-pip") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("spread-pip"))).Value))
+    If colHeaders.Exists(LCase("spread-bp")) Then tradeDetailsDict("spread-bp") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("spread-bp"))).Value))
+    If colHeaders.Exists(LCase("rtc")) Then tradeDetailsDict("rtc") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("rtc"))).Value))
+    If colHeaders.Exists(LCase("status")) Then tradeDetailsDict("status") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("status"))).Value))
+    If colHeaders.Exists(LCase("requestingFullName")) Then tradeDetailsDict("requestingFullName") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("requestingFullName"))).Value))
+    If colHeaders.Exists(LCase("filename")) Then tradeDetailsDict("filename") = Trim(CStr(ws.Cells(dataRow, colHeaders(LCase("filename"))).Value))
+
+    ' Store initial tradeType and valueDate for later comparison (for red font logic)
+    Dim initialTradeType As String: initialTradeType = tradeDetailsDict("tradeType")
+    ' For initialValueDate, use a string representation of the parsed date for robust comparison
+    Dim initialValueDateString As String
+    If IsDate(tradeDetailsDict("valueDate")) Then
+        initialValueDateString = Format(tradeDetailsDict("valueDate"), "dd-mmm-yy")
+    Else
+        initialValueDateString = CStr(tradeDetailsDict("valueDate"))
+    End If
+
+
+    ' --- Determine Trade Type (Tod, Tom, Spot, Forward, Swap) ---
+    Dim rawTradeType As String
+    rawTradeType = LCase(tradeDetailsDict("tradeType"))
+    
+    Dim parsedValueDate As Variant
+    ' Ensure parsedValueDate is derived from the dictionary's value, which is now potentially a Date
+    If IsDate(tradeDetailsDict("valueDate")) Then
+        parsedValueDate = CDate(tradeDetailsDict("valueDate"))
+    Else
+        parsedValueDate = TryParseDate(CStr(tradeDetailsDict("valueDate"))) ' Try parsing if it's text
+    End If
+
+
+    ' Get business dates for comparison
+    Dim todayBiz As Date: todayBiz = Date ' TOD is always current calendar date
+    Dim tomBiz As Date: tomBiz = GetTomDateFromSetup(tradeDetailsDict("currencyPair"))
+    Dim spotBiz As Date: spotBiz = GetSpotDateFromSetup(tradeDetailsDict("currencyPair"))
+
+    ' NEW LOGIC: Infer tradeType if missing based on valueDate (if possible)
+    If Len(tradeDetailsDict("tradeType")) = 0 Or LCase(tradeDetailsDict("tradeType")) = "tod" Or LCase(tradeDetailsDict("tradeType")) = "tdy" Or LCase(tradeDetailsDict("tradeType")) = "tom" Or LCase(tradeDetailsDict("tradeType")) = "spot" Or LCase(tradeDetailsDict("tradeType")) = "sp" Or LCase(tradeDetailsDict("tradeType")) = "outright" Or LCase(tradeDetailsDict("tradeType")) = "fwd" Or LCase(tradeDetailsDict("tradeType")) = LCase(TRADE_TYPE_FORWARD) Then
+        If Not IsNull(parsedValueDate) Then
+            Dim inferredTradeType As String
+            If parsedValueDate = todayBiz Then
+                inferredTradeType = TRADE_TYPE_TOD
+            ElseIf parsedValueDate = tomBiz Then
+                inferredTradeType = TRADE_TYPE_TOM
+            ElseIf parsedValueDate = spotBiz Then
+                inferredTradeType = TRADE_TYPE_SPOT
+            Else
+                inferredTradeType = TRADE_TYPE_FORWARD
+            End If
+
+            ' Only update if current tradeType is empty or is a generic type that can be refined
+            If Len(tradeDetailsDict("tradeType")) = 0 Or _
+               LCase(tradeDetailsDict("tradeType")) = "outright" Or _
+               LCase(tradeDetailsDict("tradeType")) = "fwd" Or _
+               LCase(tradeDetailsDict("tradeType")) = LCase(TRADE_TYPE_FORWARD) Or _
+               (LCase(tradeDetailsDict("tradeType")) = "tod" And inferredTradeType <> TRADE_TYPE_TOD) Or _
+               (LCase(tradeDetailsDict("tradeType")) = "tdy" And inferredTradeType <> TRADE_TYPE_TOD) Or _
+               (LCase(tradeDetailsDict("tradeType")) = "tom" And inferredTradeType <> TRADE_TYPE_TOM) Or _
+               (LCase(tradeDetailsDict("tradeType")) = "spot" And inferredTradeType <> TRADE_TYPE_SPOT) Or _
+               (LCase(tradeDetailsDict("tradeType")) = "sp" And inferredTradeType <> TRADE_TYPE_SPOT) Then
+                
+                tradeDetailsDict("tradeType") = inferredTradeType ' Update the dictionary's tradeType
+                tradeDetailsDict("isTradeTypePopulated") = True ' Flag that tradeType was populated
+                rawTradeType = LCase(inferredTradeType) ' Update rawTradeType for the Select Case below
+            End If
+        Else
+            ' If tradeType is missing AND valueDate is missing/invalid, this is an error
+            tradeDetailsDict.Add "Error", "Missing 'tradeType' and unable to infer from missing/invalid 'valueDate'."
+            Set GetTradeDetails = tradeDetailsDict
+            Exit Function
+        End If
+    End If
+    
+    Select Case rawTradeType
+        Case LCase(TRADE_TYPE_SWAP), "swp", "sw" ' Handle SWAP aliases
+            determinedTradeType = TRADE_TYPE_SWAP
+            tradeIdValue = tradeDetailsDict("tradeId")
+            
+            Dim swapLegs As New Collection
+            Dim currentLoopRow As Long ' Renamed to avoid conflict with outer currentRow
+            Dim currentTradeId As String
+            Dim currentTradeType As String
+            
+            For currentLoopRow = dataRow - 5 To dataRow + 5
+                ' Check if the row index is within the sheet's bounds and has a tradeId.
+                If currentLoopRow >= 7 And currentLoopRow <= ws.Cells(ws.Rows.Count, tradeIdCol).End(xlUp).Row Then
+                    currentTradeId = Trim(CStr(ws.Cells(currentLoopRow, tradeIdCol).Value))
+                    currentTradeType = Trim(CStr(ws.Cells(currentLoopRow, tradeTypeCol).Value))
+                    
+                    If StrComp(currentTradeId, tradeIdValue, vbTextCompare) = 0 And _
+                       StrComp(currentTradeType, TRADE_TYPE_SWAP, vbTextCompare) = 0 Then
+                        swapLegs.Add currentLoopRow
+                    End If
+                End If
+            Next currentLoopRow
+
+            If swapLegs.Count <> 2 Then
+                tradeDetailsDict.Add "Error", "For Swap tradeId " & tradeIdValue & ", expected 2 rows but found " & swapLegs.Count & "."
+                Set GetTradeDetails = tradeDetailsDict
+                Exit Function
+            End If
+
+            Dim row1ValueDate As Date, row2ValueDate As Date
+            Dim row1RowIndex As Long, row2RowIndex As Long
+            Dim tempDate1 As Variant, tempDate2 As Variant
+
+            row1RowIndex = swapLegs.Item(1)
+            row2RowIndex = swapLegs.Item(2)
+
+            ' Use the valueDateCol determined earlier
+            tempDate1 = TryParseDate(Trim(CStr(ws.Cells(row1RowIndex, valueDateCol).Value)))
+            tempDate2 = TryParseDate(Trim(CStr(ws.Cells(row2RowIndex, valueDateCol).Value)))
+
+            If IsNull(tempDate1) Or IsNull(tempDate2) Then
+                tradeDetailsDict.Add "Error", "Invalid 'valueDate' for swap tradeId " & tradeIdValue & "."
+                Set GetTradeDetails = tradeDetailsDict
+                Exit Function
+            End If
+            row1ValueDate = CDate(tempDate1)
+            row2ValueDate = CDate(tempDate2)
+
+            If row1ValueDate < row2ValueDate Then
+                tradeDetailsDict.Add "nearLegRow", row1RowIndex
+                tradeDetailsDict.Add "farLegRow", row2RowIndex
+            Else
+                tradeDetailsDict.Add "nearLegRow", row2RowIndex
+                tradeDetailsDict.Add "farLegRow", row1RowIndex
+            End If
+            
+            tradeDetailsDict.Add "activeRowIsNearLeg", (dataRow = tradeDetailsDict("nearLegRow"))
+            
+            ' --- Determine Swap Trade Mode for both legs based on traderAllInRate ---
+            Dim traderAllInRateCol As Long
+            traderAllInRateCol = GetColumnIndexByName(ws, "traderAllInRate")
+            If traderAllInRateCol = 0 Then
+                tradeDetailsDict.Add "Error", "Mandatory header 'traderAllInRate' is missing."
+                Set GetTradeDetails = tradeDetailsDict
+                Exit Function
+            End If
+            
+            Dim nearLegRate As String
+            nearLegRate = Trim(CStr(ws.Cells(tradeDetailsDict("nearLegRow"), traderAllInRateCol).Value))
+            
+            Dim farLegRate As String
+            farLegRate = Trim(CStr(ws.Cells(tradeDetailsDict("farLegRow"), traderAllInRateCol).Value))
+
+            If Len(nearLegRate) > 0 Or Len(farLegRate) > 0 Then
+                tradeMode = TRADE_MODE_ALREADYDEALT
+            Else
+                tradeMode = TRADE_MODE_LIVE
+            End If
+
+        Case "outright", "fwd", LCase(TRADE_TYPE_FORWARD) ' Handle OUTRIGHT/FORWARD aliases
+            ' If tradeType was already inferred from valueDate, parsedValueDate is valid
+            ' If tradeType was "outright" initially, ensure valueDate is present
+            If IsNull(parsedValueDate) Then
+                 tradeDetailsDict.Add "Error", "A tradeType of 'OUTRIGHT' requires a valid valueDate to determine if it is TOD, TOM or FORWARD."
+                 Set GetTradeDetails = tradeDetailsDict
+                 Exit Function
+            End If
+
+            ' Use business dates for comparisons
+            If parsedValueDate = todayBiz Then
+                determinedTradeType = TRADE_TYPE_TOD
+            ElseIf parsedValueDate = tomBiz Then
+                determinedTradeType = TRADE_TYPE_TOM
+            ElseIf parsedValueDate = spotBiz Then
+                determinedTradeType = TRADE_TYPE_SPOT
+            Else
+                determinedTradeType = TRADE_TYPE_FORWARD
+            End If
+
+        Case LCase(TRADE_TYPE_SPOT), "sp" ' Handle SPOT aliases
+            determinedTradeType = TRADE_TYPE_SPOT
+        
+        Case LCase(TRADE_TYPE_TOD), "tdy" ' Direct TOD input
+            determinedTradeType = TRADE_TYPE_TOD
+
+        Case LCase(TRADE_TYPE_TOM) ' Direct TOM input
+            determinedTradeType = TRADE_TYPE_TOM
+            
+        Case Else
+            tradeDetailsDict.Add "Error", "Unknown tradeType '" & tradeDetailsDict("tradeType") & "'."
+            Set GetTradeDetails = tradeDetailsDict
+            Exit Function
+    End Select
+    
+    tradeDetailsDict.Add "determinedTradeType", determinedTradeType
+    
+    ' --- Determine Execution Mode (Live vs. AlreadyDealt) for non-swap trades ---
+    If determinedTradeType <> TRADE_TYPE_SWAP Then
+        If Len(tradeDetailsDict("traderAllInRate")) > 0 Then
+            tradeMode = TRADE_MODE_ALREADYDEALT
+        Else
+            tradeMode = TRADE_MODE_LIVE
+        End If
+    End If
+    tradeDetailsDict.Add "tradeMode", tradeMode
+    
+    ' --- Mandatory Field Checks ---
+    If tradeMode = TRADE_MODE_ALREADYDEALT Then
+        ' Validate allowed trade types for AlreadyDealt
+        Select Case determinedTradeType
+            Case TRADE_TYPE_SPOT, TRADE_TYPE_TOD, TRADE_TYPE_TOM, TRADE_TYPE_FORWARD, TRADE_TYPE_SWAP
+                ' All internal determined types are valid for AlreadyDealt mode,
+                ' as long as they originated from SPOT, OUTRIGHT, or SWAP input.
+            Case Else ' This should ideally not be reached if initial tradeType parsing is correct
+                tradeDetailsDict.Add "Error", "Invalid determined TradeType '" & determinedTradeType & "' for AlreadyDealt mode."
+                Set GetTradeDetails = tradeDetailsDict
+                Exit Function
+        End Select
+
+        If Len(tradeDetailsDict("account")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("tradeId")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("currencyPair")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("direction")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("ccy1")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("ccy1Amount")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("ccy2Amount")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("tradeEntryDate")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("tradeType")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("tenor")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("valueDate")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("tradeEntryTime")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("traderSpotRate")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("stp_YN")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("traderForwardPoints")) = 0 Then GoTo MissingFieldError:
+    Else ' Live Mode
+        ' Validate allowed trade types for Live
+        Select Case determinedTradeType
+            Case TRADE_TYPE_SPOT, TRADE_TYPE_TOD, TRADE_TYPE_TOM, TRADE_TYPE_FORWARD, TRADE_TYPE_SWAP
+                ' Valid trade types
+            Case Else
+                tradeDetailsDict.Add "Error", "Invalid determined TradeType '" & determinedTradeType & "' for Live mode."
+                Set GetTradeDetails = tradeDetailsDict
+                Exit Function
+        End Select
+
+        If Len(tradeDetailsDict("account")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("currencyPair")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("direction")) = 0 Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("ccy1")) = 0 Then GoTo MissingFieldError:
+        
+        ' Check if both ccy1Amount AND ccy2Amount are populated for Live trade
+        If Len(tradeDetailsDict("ccy1Amount")) > 0 And Len(tradeDetailsDict("ccy2Amount")) > 0 Then
+            tradeDetailsDict.Add "Error", "For Live trade, only one of 'ccy1Amount' or 'ccy2Amount' can be populated."
+            Set GetTradeDetails = tradeDetailsDict
+            Exit Function
+        End If
+        ' Original check for neither populated (still mandatory for Live)
+        If (Len(tradeDetailsDict("ccy1Amount")) = 0 And Len(tradeDetailsDict("ccy2Amount")) = 0) Then GoTo MissingFieldError:
+        If Len(tradeDetailsDict("tradeType")) = 0 Then GoTo MissingFieldError:
+        
+        If LCase(tradeDetailsDict("stp_YN")) = "n" Then
+            tradeDetailsDict.Add "Error", "stp_YN can't be N for Live trades."
+            Set GetTradeDetails = tradeDetailsDict
+            Exit Function
+        End If
+
+        ' --- Populate missing valueDate for Live Tod, Tom, Spot trades using setup functions ---
+        ' Also verify correctness if valueDate is already present
+        If Len(tradeDetailsDict("valueDate")) = 0 Or Not IsDate(tradeDetailsDict("valueDate")) Then ' Check if empty or not a date type
+            Select Case determinedTradeType
+                Case TRADE_TYPE_TOD
+                    tradeDetailsDict("valueDate") = todayBiz ' Assign actual Date value
+                    tradeDetailsDict("isValueDatePopulated") = True
+                Case TRADE_TYPE_TOM
+                    tradeDetailsDict("valueDate") = tomBiz ' Assign actual Date value
+                    tradeDetailsDict("isValueDatePopulated") = True
+                Case TRADE_TYPE_SPOT
+                    tradeDetailsDict("valueDate") = spotBiz ' Assign actual Date value
+                    tradeDetailsDict("isValueDatePopulated") = True
+                ' For FWD or SWAP, valueDate is always mandatory and checked later if still empty.
+            End Select
+        Else ' valueDate is present and is a Date type, verify correctness
+            If Not IsNull(parsedValueDate) Then
+                Select Case determinedTradeType
+                    Case TRADE_TYPE_TOD
+                        If parsedValueDate <> todayBiz Then
+                            tradeDetailsDict.Add "Error", "For Live TOD trade, 'valueDate' must be today's business date."
+                            Set GetTradeDetails = tradeDetailsDict
+                            Exit Function
+                        End If
+                    Case TRADE_TYPE_TOM
+                        If parsedValueDate <> tomBiz Then
+                            tradeDetailsDict.Add "Error", "For Live TOM trade, 'valueDate' must be tomorrow's business date."
+                            Set GetTradeDetails = tradeDetailsDict
+                            Exit Function
+                        End If
+                    Case TRADE_TYPE_SPOT
+                        If parsedValueDate <> spotBiz Then
+                            tradeDetailsDict.Add "Error", "For Live SPOT trade, 'valueDate' must be two business days from today."
+                            Set GetTradeDetails = tradeDetailsDict
+                            Exit Function
+                        End If
+                    Case TRADE_TYPE_FORWARD
+                        If parsedValueDate <= spotBiz Then
+                            tradeDetailsDict.Add "Error", "For Live FORWARD trade, 'valueDate' must be beyond SPOT business date."
+                            Set GetTradeDetails = tradeDetailsDict
+                            Exit Function
+                        End If
+                    ' SWAP valueDate handled in its own block already
+                End Select
+            Else
+                ' This case should be less likely now that valueDate is stored as Date,
+                ' but included for robustness if parsing somehow fails for an existing date.
+                tradeDetailsDict.Add "Error", "Invalid 'valueDate' format for Live trade validation (after initial parsing)."
+                Set GetTradeDetails = tradeDetailsDict
+                Exit Function
+            End If
+        End If
+    End If
+    
+    ' --- Validate Spread/RTC ---
+    Dim spreadPipVal As String: spreadPipVal = tradeDetailsDict("spread-pip")
+    Dim spreadBpVal As String: spreadBpVal = tradeDetailsDict("spread-bp")
+    Dim rtcVal As String: rtcVal = tradeDetailsDict("rtc")
+
+    Dim populatedCount As Integer: populatedCount = 0
+    Dim populatedField As String: populatedField = ""
+
+    If Len(spreadPipVal) > 0 Then
+        populatedCount = populatedCount + 1
+        populatedField = "spread-pip"
+    End If
+    If Len(spreadBpVal) > 0 Then
+        populatedCount = populatedCount + 1
+        populatedField = "spread-bp"
+    End If
+    If Len(rtcVal) > 0 Then
+        populatedCount = populatedCount + 1
+        populatedField = "rtc"
+    End If
+
+    If determinedTradeType = TRADE_TYPE_SWAP Then
+        If tradeDetailsDict("activeRowIsNearLeg") = True Then
+            If populatedCount > 0 Then
+                tradeDetailsDict.Add "Error", "For a SWAP Near Leg, 'spread-pip', 'spread-bp', and 'rtc' must all be blank."
+                Set GetTradeDetails = tradeDetailsDict
+                Exit Function
+            End If
+            tradeDetailsDict.Add "populatedSpreadField", "N/A (SWAP Near Leg)"
+        Else ' Far Leg
+            If populatedCount <> 1 Then
+                tradeDetailsDict.Add "Error", "For a SWAP Far Leg, exactly one of 'spread-pip', 'spread-bp', or 'rtc' must be populated."
+                Set GetTradeDetails = tradeDetailsDict
+                Exit Function
+            End If
+            tradeDetailsDict.Add "populatedSpreadField", populatedField
+        End If
+    Else ' All other trades (Spot, Tod, Tom, Forward)
+        If populatedCount <> 1 Then
+            tradeDetailsDict.Add "Error", "For a non-SWAP trade, exactly one of 'spread-pip', 'spread-bp', or 'rtc' must be populated."
+            Set GetTradeDetails = tradeDetailsDict
+            Exit Function
+        End If
+        tradeDetailsDict.Add "populatedSpreadField", populatedField
+    End If
+
+    Set GetTradeDetails = tradeDetailsDict
+    Exit Function
+
+MissingFieldError:
+    ' Determine which field is missing and provide a helpful message
+    Dim fieldName As String
+    If Len(tradeDetailsDict("account")) = 0 Then fieldName = "account"
+    If Len(tradeDetailsDict("tradeId")) = 0 Then fieldName = "tradeId"
+    If Len(tradeDetailsDict("currencyPair")) = 0 Then fieldName = "currencyPair"
+    If Len(tradeDetailsDict("direction")) = 0 Then fieldName = "direction"
+    If Len(tradeDetailsDict("ccy1")) = 0 Then fieldName = "ccy1"
+    If Len(tradeDetailsDict("ccy1Amount")) = 0 And tradeMode = TRADE_MODE_ALREADYDEALT Then fieldName = "ccy1Amount"
+    If Len(tradeDetailsDict("ccy2Amount")) = 0 And tradeMode = TRADE_MODE_ALREADYDEALT Then fieldName = "ccy2Amount"
+    If (Len(tradeDetailsDict("ccy1Amount")) = 0 And Len(tradeDetailsDict("ccy2Amount")) = 0) And tradeMode = TRADE_MODE_LIVE Then fieldName = "ccy1Amount or ccy2Amount"
+    If Len(tradeDetailsDict("tradeEntryDate")) = 0 Then fieldName = "tradeEntryDate"
+    If Len(tradeDetailsDict("tradeType")) = 0 Then fieldName = "tradeType"
+    If Len(tradeDetailsDict("tenor")) = 0 Then fieldName = "tenor"
+    If Len(tradeDetailsDict("valueDate")) = 0 Then fieldName = "valueDate"
+    If Len(tradeDetailsDict("tradeEntryTime")) = 0 Then fieldName = "tradeEntryTime"
+    If Len(tradeDetailsDict("traderSpotRate")) = 0 Then fieldName = "traderSpotRate"
+    If Len(tradeDetailsDict("stp_YN")) = 0 Then fieldName = "stp_YN"
+    If Len(tradeDetailsDict("traderForwardPoints")) = 0 Then fieldName = "traderForwardPoints"
+    
+    tradeDetailsDict.Add "Error", "Mandatory field '" & fieldName & "' is missing for " & tradeMode & " trade."
+    Set GetTradeDetails = tradeDetailsDict
+    Exit Function
+
+ErrorHandler:
+    Dim errMessage As String: errMessage = Err.Description
+    Err.Clear
+    tradeDetailsDict.Add "Error", "Unexpected Error: " & errMessage
+    Set GetTradeDetails = tradeDetailsDict
+End Function
+
+' --- Helper Functions ---
+Private Sub GetHeaderColumns(ByVal ws As Worksheet, ByRef tradeModeCol As Long, ByRef tradeTypeCol As Long)
+    ' Finds or adds the header columns for trade mode and type.
+    Dim lastHeaderCol As Long
+    Dim i As Long
+    Dim foundTradeModeHeader As Boolean: foundTradeModeHeader = False
+    Dim foundTradeTypeHeader As Boolean: foundTradeTypeHeader = False
+    Dim foundValueDateHeader As Boolean: foundValueDateHeader = False ' New flag for valueDate
+
+    lastHeaderCol = ws.Cells(6, ws.Columns.Count).End(xlToLeft).Column
+
+    For i = 1 To lastHeaderCol
+        If LCase(Trim(ws.Cells(6, i).Value)) = LCase("Trade Mode") Then
+            tradeModeCol = i
+            foundTradeModeHeader = True
+        ElseIf LCase(Trim(ws.Cells(6, i).Value)) = LCase("Determined Trade Type") Then
+            tradeTypeCol = i
+            foundTradeTypeHeader = True
+        ElseIf LCase(Trim(ws.Cells(6, i).Value)) = LCase("valueDate") Then ' Check for valueDate header
+            foundValueDateHeader = True
+        End If
+    Next i
+
+    If Not foundTradeModeHeader Then
+        lastHeaderCol = lastHeaderCol + 1
+        ws.Cells(6, lastHeaderCol).Value = "Trade Mode"
+        tradeModeCol = lastHeaderCol
+    End If
+    
+    If Not foundTradeTypeHeader Then
+        lastHeaderCol = lastHeaderCol + 1
+        ws.Cells(6, lastHeaderCol).Value = "Determined Trade Type"
+        tradeTypeCol = lastHeaderCol
+    End If
+
+    If Not foundValueDateHeader Then ' Add valueDate header if missing
+        lastHeaderCol = lastHeaderCol + 1
+        ws.Cells(6, lastHeaderCol).Value = "valueDate"
+        ' No need to store valueDateCol here, it's retrieved by GetColumnIndexByName in the main subs
+    End If
+End Sub
+
+Private Function GetColumnIndexByName(ByVal ws As Worksheet, ByVal columnName As String) As Long
+    ' Returns the column index for a given header name in row 6.
+    Dim i As Long
+    For i = 1 To ws.Cells(6, ws.Columns.Count).End(xlToLeft).Column
+        If LCase(Trim(ws.Cells(6, i).Value)) = LCase(columnName) Then
+            GetColumnIndexByName = i
+            Exit Function
+        End If
+    Next i
+    ' Return 0 if column is not found
+    GetColumnIndexByName = 0
+End Function
+
+Private Function TryParseDate(ByVal dateString As String) As Variant
+    ' Attempts to convert a string to a Date.
+    ' Handles "Fri 29-Aug-25" format robustly.
+    Dim parts() As String
+    Dim dayVal As Integer, monthVal As Integer, yearVal As Integer
+    Dim tempDate As Date
+    Dim cleanDateString As String
+    
+    If IsDate(dateString) Then
+        TryParseDate = CDate(dateString)
+        Exit Function
+    End If
+
+    ' Try to extract "DD-MMM-YY" from "Ddd DD-Mmm-YY"
+    cleanDateString = Trim(dateString)
+    If InStr(cleanDateString, " ") > 0 Then
+        cleanDateString = Mid(cleanDateString, InStr(cleanDateString, " ") + 1)
+    End If
+
+    parts = Split(cleanDateString, "-")
+
+    If UBound(parts) = 2 Then
+        On Error Resume Next
+        dayVal = CInt(parts(0))
+        
+        Select Case LCase(parts(1))
+            Case "jan": monthVal = 1: Case "feb": monthVal = 2: Case "mar": monthVal = 3: Case "apr": monthVal = 4
+            Case "may": monthVal = 5: Case "jun": monthVal = 6: Case "jul": monthVal = 7: Case "aug": monthVal = 8
+            Case "sep": monthVal = 9: Case "oct": monthVal = 10: Case "nov": monthVal = 11: Case "dec": monthVal = 12
+            Case Else: monthVal = 0
+        End Select
+        
+        yearVal = CInt(parts(2))
+        If yearVal < 100 Then
+            If yearVal >= 30 Then ' Assuming 1930-2029 for 2-digit years
+                yearVal = 1900 + yearVal
+            Else
+                yearVal = 2000 + yearVal
+            End If
+        End If
+
+        If Err.Number = 0 And monthVal <> 0 Then
+            tempDate = DateSerial(yearVal, monthVal, dayVal)
+            If Err.Number = 0 Then
+                TryParseDate = tempDate
+            Else
+                TryParseDate = Null ' DateSerial failed
+            End If
+        Else
+            TryParseDate = Null ' CInt or month mapping failed
+        End If
+        On Error GoTo 0
+    Else
+        TryParseDate = Null ' Not enough parts after splitting
+    End If
+End Function
+
+' --- NEW Helper Function: Add Business Days ---
+Private Function AddBusinessDays(ByVal startDate As Date, ByVal numDays As Long) As Date
+    Dim currentDate As Date
+    Dim daysAdded As Long
+    
+    currentDate = startDate
+    daysAdded = 0
+    
+    Do While daysAdded < numDays
+        currentDate = currentDate + 1 ' Add a calendar day
+        ' Check if it's a weekend (Sunday = 1, Saturday = 7)
+        If Weekday(currentDate, vbMonday) < 6 Then ' vbMonday makes Monday=1, Friday=5
+            daysAdded = daysAdded + 1
+        End If
+    Loop
+    
+    AddBusinessDays = currentDate
+End Function
+
+Function GetTomDateFromSetup(ByVal currencyPair As String) As Date
+    ' Returns the TOM date, accounting for business days.
+    GetTomDateFromSetup = AddBusinessDays(Date, 1)
+End Function
+
+Function GetSpotDateFromSetup(ByVal currencyPair As String) As Date
+    ' Returns the SPOT date, accounting for business days.
+    GetSpotDateFromSetup = AddBusinessDays(Date, 2)
+End Function
